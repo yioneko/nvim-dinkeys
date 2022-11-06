@@ -35,7 +35,7 @@ local function detect_lang_inkeys(lang)
       end
     end
 
-    if not detect_buf then
+    if not detect_buf or not vim.api.nvim_buf_is_valid(detect_buf) then
       detect_buf = vim.api.nvim_create_buf(false, true)
     end
 
