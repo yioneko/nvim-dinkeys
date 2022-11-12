@@ -10,6 +10,12 @@ local augroup_write = vim.api.nvim_create_augroup("dinkeys_write", {})
 local BUF_ORI_INKEY = "dinkeys_original"
 local BUF_ATTACHED = "dinkeys_attached"
 
+local function nr(winnr)
+  winnr = winnr or vim.api.nvim_get_current_win()
+  local bufnr = vim.api.nvim_win_get_buf(winnr)
+  return winnr, bufnr
+end
+
 local detect_buf
 local function detect_lang_inkeys(lang, cb)
   for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
@@ -39,8 +45,9 @@ local function detect_lang_inkeys(lang, cb)
   end)
 end
 
-function M.detect(bufnr, cb)
-  local lnum, col = unpack(vim.api.nvim_win_get_cursor(0))
+function M.detect(winnr, cb)
+  local winnr, bufnr = nr(winnr)
+  local lnum, col = unpack(vim.api.nvim_win_get_cursor(winnr))
   local lang = utils.get_lang_at_pos(bufnr, lnum - 1, col)
   local ori_keys = vim.b[bufnr][BUF_ORI_INKEY] or vim.bo[bufnr].indentkeys
 
@@ -51,13 +58,13 @@ function M.detect(bufnr, cb)
   end
 
   local cb_with_set = vim.schedule_wrap(function(keys)
-    local nlnum, ncol = unpack(vim.api.nvim_win_get_cursor(0))
+    local nlnum, ncol = unpack(vim.api.nvim_win_get_cursor(winnr))
     -- check whether cursor has moved
-    if not keys or vim.api.nvim_get_current_buf() ~= bufnr or nlnum ~= lnum or ncol ~= col then
-      checked_cb()
-    else
+    if keys and nlnum == lnum and ncol == col then
       storage.set(lang, keys)
       checked_cb(keys)
+    else
+      checked_cb()
     end
   end)
 
@@ -74,11 +81,12 @@ function M.detect(bufnr, cb)
   end
 end
 
-function M.detect_and_apply(bufnr)
-  if vim.api.nvim_get_current_buf() ~= bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
+function M.detect_and_apply(winnr)
+  local winnr, bufnr = nr(winnr)
+  if not vim.api.nvim_buf_is_valid(bufnr) then
     return
   end
-  M.detect(bufnr, function(keys)
+  M.detect(winnr, function(keys)
     if keys then
       vim.bo[bufnr].indentkeys = keys
     end
@@ -88,7 +96,7 @@ end
 local conf = {
   enable = { "markdown" },
   disable_cache = false,
-  events = { "InsertEnter", "CursorMoved" },
+  events = { "WinEnter", "CursorMoved" },
   write_events = { "ExitPre" },
   debounce = 200,
 }
@@ -123,10 +131,10 @@ function M.setup(o)
   })
 
   vim.api.nvim_clear_autocmds({ group = augroup_attach })
-  vim.api.nvim_create_autocmd("Filetype", {
+  vim.api.nvim_create_autocmd("FileType", {
     group = augroup_attach,
-    callback = function()
-      local bufnr = vim.api.nvim_get_current_buf()
+    callback = function(args)
+      local bufnr = args.buf
       if type(conf.enable) == "function" then
         if conf.enable(bufnr) then
           M.attach(bufnr)
@@ -136,16 +144,20 @@ function M.setup(o)
       end
     end,
   })
-  vim.api.nvim_create_autocmd("Filetype", {
+  vim.api.nvim_create_autocmd("FileType", {
     group = augroup_attach,
-    callback = function()
-      local bufnr = vim.api.nvim_get_current_buf()
+    callback = function(args)
+      local bufnr = args.buf
+      local winnr = utils.find_win_for_buf(bufnr)
+      if winnr == nil then
+        return
+      end
       if type(conf.disable_cache) == "function" then
         if conf.disable_cache(bufnr) then
-          M.detect(bufnr)
+          M.detect(winnr)
         end
       elseif not conf.disable_cache then
-        M.detect(bufnr)
+        M.detect(winnr)
       end
     end,
   })
@@ -166,13 +178,13 @@ function M.attach(bufnr, opts)
   end
 
   local detect = utils.debounced_fn(M.detect_and_apply, local_conf.debounce)
-  detect(bufnr)
+  detect(utils.find_win_for_buf(bufnr))
 
   vim.api.nvim_create_autocmd(local_conf.events, {
     group = augroup_buf,
     buffer = bufnr,
     callback = function()
-      detect(bufnr)
+      detect(vim.api.nvim_get_current_win())
     end,
   })
 end

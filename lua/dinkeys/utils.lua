@@ -36,4 +36,18 @@ function M.debounced_fn(fn, ms)
   end
 end
 
+function M.find_win_for_buf(bufnr)
+  local cur_win = vim.api.nvim_get_current_win()
+  -- first test current window
+  if vim.api.nvim_win_get_buf(cur_win) == bufnr then
+    return cur_win
+  end
+  local wins = vim.api.nvim_list_wins()
+  for _, win in ipairs(wins) do
+    if vim.api.nvim_win_get_buf(win) == bufnr then
+      return win
+    end
+  end
+end
+
 return M
