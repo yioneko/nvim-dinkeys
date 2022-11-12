@@ -37,6 +37,7 @@ local function detect_lang_inkeys(lang)
 
     if not detect_buf or not vim.api.nvim_buf_is_valid(detect_buf) then
       detect_buf = vim.api.nvim_create_buf(false, true)
+      vim.bo[detect_buf].syntax = ""
     end
 
     vim.bo[detect_buf].filetype = lang
@@ -71,7 +72,7 @@ function M.detect(bufnr)
         vim.schedule_wrap(function(keys)
           local nlnum, ncol = unpack(vim.api.nvim_win_get_cursor(0))
           -- check whether cursor has moved
-          if nlnum == lnum and ncol == col then
+          if vim.api.nvim_get_current_buf() == bufnr and nlnum == lnum and ncol == col then
             cb(keys)
           else
             cb(ori_keys)
@@ -94,7 +95,7 @@ end
 
 function M.detect_and_set(bufnr)
   local task = coroutine.wrap(vim.schedule_wrap(function()
-    if not vim.api.nvim_buf_is_valid(bufnr) then
+    if vim.api.nvim_get_current_buf() ~= bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
       return
     end
     local detecting = M.detect(bufnr)
