@@ -10,106 +10,79 @@ local augroup_write = vim.api.nvim_create_augroup("dinkeys_write", {})
 local BUF_ORI_INKEY = "dinkeys_original"
 local BUF_ATTACHED = "dinkeys_attached"
 
-local function resume(co, cb)
-  coroutine.resume(co)
-  coroutine.resume(co, cb)
-end
-
-local function void(co)
-  return (coroutine.wrap(function()
-    resume(co, function() end)
-  end))()
-end
-
 local detect_buf
-local function detect_lang_inkeys(lang)
-  return coroutine.create(function()
-    local cb = coroutine.yield()
-    for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
-      if vim.api.nvim_buf_is_loaded(bufnr) and vim.bo[bufnr].buftype == "" and vim.bo[bufnr].filetype == lang then
-        if vim.b[bufnr][BUF_ATTACHED] and vim.b[bufnr][BUF_ORI_INKEY] then
-          return cb(vim.b[bufnr][BUF_ORI_INKEY])
-        else
-          return cb(vim.bo[bufnr].indentkeys)
-        end
+local function detect_lang_inkeys(lang, cb)
+  for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_loaded(bufnr) and vim.bo[bufnr].buftype == "" and vim.bo[bufnr].filetype == lang then
+      if vim.b[bufnr][BUF_ATTACHED] and vim.b[bufnr][BUF_ORI_INKEY] then
+        return cb(vim.b[bufnr][BUF_ORI_INKEY])
+      else
+        return cb(vim.bo[bufnr].indentkeys)
       end
     end
+  end
 
-    if not detect_buf or not vim.api.nvim_buf_is_valid(detect_buf) then
-      detect_buf = vim.api.nvim_create_buf(false, true)
-      vim.bo[detect_buf].syntax = ""
+  if not detect_buf or not vim.api.nvim_buf_is_valid(detect_buf) then
+    detect_buf = vim.api.nvim_create_buf(false, true)
+    vim.bo[detect_buf].syntax = ""
+  end
+
+  vim.bo[detect_buf].filetype = lang
+  -- TODO: 'OptionSet' event does not work
+  vim.schedule(function()
+    -- make sure the filetype doesn't changed
+    if vim.bo[detect_buf].filetype == lang then
+      cb(vim.bo[detect_buf].indentkeys)
+    else
+      cb()
     end
-
-    vim.bo[detect_buf].filetype = lang
-    -- TODO: 'OptionSet' event does not work
-    vim.schedule(function()
-      -- make sure the filetype doesn't changed
-      if vim.bo[detect_buf].filetype == lang then
-        cb(vim.bo[detect_buf].indentkeys)
-      end
-    end)
   end)
 end
 
-function M.detect(bufnr)
+function M.detect(bufnr, cb)
   local lnum, col = unpack(vim.api.nvim_win_get_cursor(0))
   local lang = utils.get_lang_at_pos(bufnr, lnum - 1, col)
   local ori_keys = vim.b[bufnr][BUF_ORI_INKEY] or vim.bo[bufnr].indentkeys
 
-  local detecting = coroutine.create(function()
-    if not vim.api.nvim_buf_is_valid(bufnr) then
-      return
+  local function checked_cb(keys)
+    if cb then
+      return cb(keys)
     end
+  end
 
-    local cb = coroutine.yield()
-    if lang == vim.bo[bufnr].filetype then
-      return cb(ori_keys)
-    elseif storage.get(lang) then
-      return cb(storage.get(lang))
+  local cb_with_set = vim.schedule_wrap(function(keys)
+    local nlnum, ncol = unpack(vim.api.nvim_win_get_cursor(0))
+    -- check whether cursor has moved
+    if not keys or vim.api.nvim_get_current_buf() ~= bufnr or nlnum ~= lnum or ncol ~= col then
+      checked_cb()
     else
-      resume(
-        detect_lang_inkeys(lang),
-        vim.schedule_wrap(function(keys)
-          local nlnum, ncol = unpack(vim.api.nvim_win_get_cursor(0))
-          -- check whether cursor has moved
-          if vim.api.nvim_get_current_buf() == bufnr and nlnum == lnum and ncol == col then
-            cb(keys)
-          else
-            cb(ori_keys)
-          end
-        end)
-      )
+      storage.set(lang, keys)
+      checked_cb(keys)
     end
   end)
 
-  return coroutine.create(function()
-    local cb = coroutine.yield()
-    resume(detecting, function(keys)
-      if keys then
-        storage.set(lang, keys)
-      end
-      cb(keys)
-    end)
-  end)
+  if not vim.api.nvim_buf_is_valid(bufnr) then
+    return
+  end
+
+  if lang == vim.bo[bufnr].filetype then
+    return checked_cb(ori_keys)
+  elseif storage.get(lang) then
+    return checked_cb(storage.get(lang))
+  else
+    detect_lang_inkeys(lang, cb_with_set)
+  end
 end
 
-function M.detect_and_set(bufnr)
-  local task = coroutine.wrap(vim.schedule_wrap(function()
-    if vim.api.nvim_get_current_buf() ~= bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
-      return
+function M.detect_and_apply(bufnr)
+  if vim.api.nvim_get_current_buf() ~= bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
+    return
+  end
+  M.detect(bufnr, function(keys)
+    if keys then
+      vim.bo[bufnr].indentkeys = keys
     end
-    local detecting = M.detect(bufnr)
-
-    resume(
-      detecting,
-      vim.schedule_wrap(function(keys)
-        if keys then
-          vim.bo[bufnr].indentkeys = keys
-        end
-      end)
-    )
-  end))
-  return task()
+  end)
 end
 
 local conf = {
@@ -121,6 +94,12 @@ local conf = {
 }
 
 local function merge_conf(base, o)
+  if o.enable ~= nil then
+    base.enable = o.enable
+  end
+  if o.disable_cache ~= nil then
+    base.disable_cache = o.disable_cache
+  end
   if o.events then
     base.events = o.events
   end
@@ -163,10 +142,10 @@ function M.setup(o)
       local bufnr = vim.api.nvim_get_current_buf()
       if type(conf.disable_cache) == "function" then
         if conf.disable_cache(bufnr) then
-          void(M.detect(bufnr))
+          M.detect(bufnr)
         end
       elseif not conf.disable_cache then
-        void(M.detect(bufnr))
+        M.detect(bufnr)
       end
     end,
   })
@@ -186,7 +165,7 @@ function M.attach(bufnr, opts)
     return
   end
 
-  local detect = utils.debounced_fn(M.detect_and_set, local_conf.debounce)
+  local detect = utils.debounced_fn(M.detect_and_apply, local_conf.debounce)
   detect(bufnr)
 
   vim.api.nvim_create_autocmd(local_conf.events, {
