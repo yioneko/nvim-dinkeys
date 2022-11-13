@@ -13,7 +13,7 @@ require('dinkeys').setup({
     -- whether to disable indentkeys cache for the buffer, can also be a function
     disable_cache = false,
     -- events of detecting langauge change
-    events = { "InsertEnter", "CursorMoved" },
+    events = { "InsertEnter" },
     -- events of writing cache to file
     write_events = { "ExitPre" },
     debounce = 200,

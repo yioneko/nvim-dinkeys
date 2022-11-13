@@ -96,7 +96,7 @@ end
 local conf = {
   enable = { "markdown" },
   disable_cache = false,
-  events = { "WinEnter", "CursorMoved" },
+  events = { "InsertEnter" },
   write_events = { "ExitPre" },
   debounce = 200,
 }
@@ -178,7 +178,6 @@ function M.attach(bufnr, opts)
   end
 
   local detect = utils.debounced_fn(M.detect_and_apply, local_conf.debounce)
-  detect(utils.find_win_for_buf(bufnr))
 
   vim.api.nvim_create_autocmd(local_conf.events, {
     group = augroup_buf,
